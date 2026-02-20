@@ -59,63 +59,62 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-/* ----------------------------------
-   Health Check Route
----------------------------------- */
-app.get('/', (req, res) => {
-  res.send('Wix Webhook Server is Live 🚀')
-})
+const installs = [];
 
-/* ----------------------------------
-   Wix App Installed Webhook
----------------------------------- */
-// app.post("/webhooks/app-installed", async (req, res) => {
-//   try {
-//     const token = req.body;
 
-//     if (!token) {
-//       return res.status(400).send("No token received");
-//     }
-
-//     // 🔐 Verify JWT using Wix App Secret
-//     const decoded = jwt.verify(token, process.env.WIX_APP_SECRET);
-
-//     console.log("Decoded Webhook:", decoded);
-
-//     if (decoded?.data?.eventType === "AppInstalled") {
-//       const instanceId = decoded.data.instanceId;
-
-//       console.log("New Installation:", instanceId);
-
-//       await sendEmail(instanceId);
-//     }
-
-//     res.status(200).send("Webhook processed successfully");
-//   } catch (error) {
-//     console.error("Webhook Error:", error.message);
-//     res.status(500).send("Webhook failed");
-//   }
-// });
 
 app.post('/webhooks/app-installed', async (req, res) => {
   try {
-    console.log('Incoming body:', req.body)
+    const ownerEmail = req.body?.site?.ownerEmail;
+    const instanceId = req.body?.instance?.instanceId;
+    const siteId = req.body?.site?.siteId;
 
-    const instanceId = req.body?.instance?.instanceId
+    const installData = {
+      instanceId,
+      ownerEmail,
+      siteId,
+      installedAt: new Date()
+    };
 
-    if (instanceId) {
-      console.log('New Installation:', instanceId)
-    }
+    installs.push(installData);
+
+    console.log("Stored Install:", installData);
 
     res.status(200).json({
       success: true,
-      received: req.body
-    })
+      message: "Install stored in memory",
+      data: installData
+    });
+
   } catch (error) {
-    console.error('Webhook Error:', error.message)
-    res.status(500).send('Webhook failed')
+    console.error('Webhook Error:', error.message);
+    res.status(500).send('Webhook failed');
   }
-})
+});
+
+app.get('/installs', (req, res) => {
+  res.json(installs);
+});
+
+// app.post('/webhooks/app-installed', async (req, res) => {
+//   try {
+//     console.log('Incoming body:', req.body)
+
+//     const instanceId = req.body?.instance?.instanceId
+
+//     if (instanceId) {
+//       console.log('New Installation:', instanceId)
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       received: req.body
+//     })
+//   } catch (error) {
+//     console.error('Webhook Error:', error.message)
+//     res.status(500).send('Webhook failed')
+//   }
+// })
 /* ----------------------------------
    Send Email Function
 ---------------------------------- */
