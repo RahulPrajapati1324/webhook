@@ -136,131 +136,84 @@
 //   console.log(`Server running on port ${PORT}`)
 // })
 
+const jwt = require("jsonwebtoken");
+const express = require("express");
+const nodemailer = require("nodemailer");
 
-import express from 'express'
-import jwt from 'jsonwebtoken'
-import nodemailer from 'nodemailer'
-import cors from 'cors'
-
-const app = express()
-
-app.use(cors())
-app.use(express.json())
-
-const installs = []
+const app = express();
 
 /* ----------------------------------
-   Webhook Endpoint
+   IMPORTANT: Use express.text()
 ---------------------------------- */
-app.post('/webhooks/app-installed', async (req, res) => {
+app.post('/webhooks/app-installed', express.text({ type: '*/*' }), async (req, res) => {
+
   try {
 
-    let data;
+    const rawPayload = jwt.verify(
+      req.body,
+      process.env.WIX_PUBLIC_KEY,
+      { algorithms: ["RS256"] }
+    );
 
-    // 🔎 If body is string → it's JWT
-    if (typeof req.body === "string") {
+    const event = JSON.parse(rawPayload.data);
+    const eventData = JSON.parse(event.data);
 
-      const decoded = jwt.verify(
-        req.body,
-        process.env.WIX_PUBLIC_KEY,
-        { algorithms: ['RS256'] }
-      );
+    console.log("Event Type:", event.eventType);
+    console.log("Event Data:", eventData);
 
-      data = decoded?.data;
+    if (event.eventType === "AppInstalled") {
 
-    } 
-    // 🔎 If body is object → direct JSON (Postman)
-    else if (typeof req.body === "object") {
+      const instanceId = event.instanceId;
+      const ownerEmail = eventData.site?.ownerEmail;
 
-      data = req.body;
+      console.log("Instance ID:", instanceId);
+      console.log("Owner Email:", ownerEmail);
 
-    } else {
-      return res.status(400).send("Invalid webhook payload");
+      if (ownerEmail) {
+        await sendEmail(ownerEmail, instanceId);
+      }
     }
 
-    console.log("Webhook Data:", data);
+    res.status(200).send("Webhook processed");
 
-    const ownerEmail = data?.site?.ownerEmail;
-    const instanceId = data?.instance?.instanceId;
-    const siteId = data?.site?.siteId;
-
-    const installData = {
-      ownerEmail,
-      instanceId,
-      siteId,
-      installedAt: new Date()
-    };
-
-    installs.push(installData);
-
-    // Optional: send email
-    if (ownerEmail) {
-      await sendEmail(ownerEmail, instanceId);
-    }
-
-    res.status(200).json({
-      success: true,
-      data: installData
-    });
-
-  } catch (error) {
-    console.error("Webhook Error:", error.message);
-    res.status(500).send("Webhook failed");
+  } catch (err) {
+    console.error("Webhook Error:", err.message);
+    res.status(400).send(`Webhook error: ${err.message}`);
   }
 });
-
-/* ----------------------------------
-   View Stored Installs
----------------------------------- */
-app.get('/installs', (req, res) => {
-  res.json(installs)
-})
 
 /* ----------------------------------
    Send Email
 ---------------------------------- */
 async function sendEmail(ownerEmail, instanceId) {
 
-  // const transporter = nodemailer.createTransport({
-  //   service: 'gmail',
-  //   auth: {
-  //     user: process.env.EMAIL_USER,
-  //     pass: process.env.EMAIL_PASS
-  //   }
-  // })
-
   const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  family: 4, // Force IPv4
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    family: 4, // Force IPv4
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
     to: process.env.EMAIL_USER,
-    subject: '🎉 New Wix App Installed',
+    subject: "🎉 New Wix App Installed",
     text: `
-New Installation Detected 🚀
+New Installation Detected
 
 Owner Email: ${ownerEmail}
 Instance ID: ${instanceId}
 Time: ${new Date().toLocaleString()}
 `
-  })
+  });
 
-  console.log("Email sent successfully")
+  console.log("Email sent successfully");
 }
 
-/* ----------------------------------
-   Start Server
----------------------------------- */
-const PORT = process.env.PORT || 3000
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
-})
+app.listen(3000, () => {
+  console.log("Server started on port 3000");
+});
