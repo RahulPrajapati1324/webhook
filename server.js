@@ -49,6 +49,94 @@
 //   console.log(`Server running on port ${PORT}`);
 // });
 
+
+
+
+
+
+// import express from 'express'
+// import jwt from 'jsonwebtoken'
+// import nodemailer from 'nodemailer'
+// import cors from 'cors'
+
+// const app = express()
+
+// app.use(cors())
+// app.use(express.json())
+
+// const installs = [];
+
+
+
+// app.post('/webhooks/app-installed', async (req, res) => {
+//   try {
+//     const ownerEmail = req.body?.site?.ownerEmail;
+//     const instanceId = req.body?.instance?.instanceId;
+//     const siteId = req.body?.site?.siteId;
+
+//     const installData = {
+//       instanceId,
+//       ownerEmail,
+//       siteId,
+//       installedAt: new Date()
+//     };
+
+//     installs.push(installData);
+
+//     console.log("Stored Install:", installData);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Install stored in memory",
+//       data: installData
+//     });
+
+//   } catch (error) {
+//     console.error('Webhook Error:', error.message);
+//     res.status(500).send('Webhook failed');
+//   }
+// });
+
+// app.get('/installs', (req, res) => {
+//   res.json(installs);
+// });
+
+// /* ----------------------------------
+//    Send Email Function
+// ---------------------------------- */
+// async function sendEmail (instanceId) {
+//   const transporter = nodemailer.createTransport({
+//     service: 'gmail',
+//     auth: {
+//       user: process.env.EMAIL_USER,
+//       pass: process.env.EMAIL_PASS
+//     }
+//   })
+
+//   await transporter.sendMail({
+//     from: process.env.EMAIL_USER,
+//     to: process.env.EMAIL_USER,
+//     subject: '🎉 New Wix App Installed',
+//     text: `A new user installed your Wix app.
+
+// Instance ID: ${instanceId}
+
+// Time: ${new Date().toLocaleString()}`
+//   })
+
+//   console.log('Email sent successfully')
+// }
+
+// /* ----------------------------------
+//    Start Server
+// ---------------------------------- */
+// const PORT = process.env.PORT || 3000
+
+// app.listen(PORT, () => {
+//   console.log(`Server running on port ${PORT}`)
+// })
+
+
 import express from 'express'
 import jwt from 'jsonwebtoken'
 import nodemailer from 'nodemailer'
@@ -59,66 +147,70 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-const installs = [];
+const installs = []
 
-
-
+/* ----------------------------------
+   Webhook Endpoint
+---------------------------------- */
 app.post('/webhooks/app-installed', async (req, res) => {
   try {
-    const ownerEmail = req.body?.site?.ownerEmail;
-    const instanceId = req.body?.instance?.instanceId;
-    const siteId = req.body?.site?.siteId;
+
+    const token = req.body
+
+    if (!token) {
+      return res.status(400).send("No token received")
+    }
+
+    // 🔐 VERIFY using Wix Public Key
+    const decoded = jwt.verify(
+      token,
+      process.env.WIX_PUBLIC_KEY,
+      { algorithms: ['RS256'] }
+    )
+
+    console.log("Decoded Webhook:", decoded)
+
+    const ownerEmail = decoded?.data?.site?.ownerEmail
+    const instanceId = decoded?.data?.instance?.instanceId
+    const siteId = decoded?.data?.site?.siteId
 
     const installData = {
       instanceId,
       ownerEmail,
       siteId,
       installedAt: new Date()
-    };
+    }
 
-    installs.push(installData);
+    installs.push(installData)
 
-    console.log("Stored Install:", installData);
+    console.log("Stored Install:", installData)
+
+    // ✅ SEND EMAIL
+    await sendEmail(ownerEmail, instanceId)
 
     res.status(200).json({
       success: true,
-      message: "Install stored in memory",
       data: installData
-    });
+    })
 
   } catch (error) {
-    console.error('Webhook Error:', error.message);
-    res.status(500).send('Webhook failed');
+    console.error("Webhook Error:", error.message)
+    res.status(500).send("Webhook failed")
   }
-});
+})
 
-app.get('/installs', (req, res) => {
-  res.json(installs);
-});
-
-// app.post('/webhooks/app-installed', async (req, res) => {
-//   try {
-//     console.log('Incoming body:', req.body)
-
-//     const instanceId = req.body?.instance?.instanceId
-
-//     if (instanceId) {
-//       console.log('New Installation:', instanceId)
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       received: req.body
-//     })
-//   } catch (error) {
-//     console.error('Webhook Error:', error.message)
-//     res.status(500).send('Webhook failed')
-//   }
-// })
 /* ----------------------------------
-   Send Email Function
+   View Stored Installs
 ---------------------------------- */
-async function sendEmail (instanceId) {
+app.get('/installs', (req, res) => {
+  res.json(installs)
+})
+
+/* ----------------------------------
+   Send Email
+---------------------------------- */
+async function sendEmail(ownerEmail, instanceId) {
+
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -131,14 +223,16 @@ async function sendEmail (instanceId) {
     from: process.env.EMAIL_USER,
     to: process.env.EMAIL_USER,
     subject: '🎉 New Wix App Installed',
-    text: `A new user installed your Wix app.
+    text: `
+New Installation Detected 🚀
 
+Owner Email: ${ownerEmail}
 Instance ID: ${instanceId}
-
-Time: ${new Date().toLocaleString()}`
+Time: ${new Date().toLocaleString()}
+`
   })
 
-  console.log('Email sent successfully')
+  console.log("Email sent successfully")
 }
 
 /* ----------------------------------
