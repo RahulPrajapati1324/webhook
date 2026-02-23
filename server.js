@@ -8,7 +8,7 @@ app.use(express.text({ type: '*/*' }));
    EMAIL CONFIG
 ---------------------------------- */
 const FROM_EMAIL = "onboarding@resend.dev";  // Resend free test sender
-const TO_EMAIL   = "2202030400145@silveroakuni.ac.in";         // ← PUT YOUR EMAIL HERE
+const TO_EMAIL   = "prajapatirahul3799@gmail.com";         // ← PUT YOUR EMAIL HERE
 
 /* ----------------------------------
    Webhook - App Installed
