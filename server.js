@@ -4,7 +4,7 @@ import nodemailer from "nodemailer";
 
 const app = express();
 
-// Wix sends a JWT as raw text body
+// Wix sends webhook as a JWT in raw text body
 app.use(express.text({ type: '*/*' }));
 
 /* ----------------------------------
@@ -17,7 +17,7 @@ app.post('/webhooks/app-installed', async (req, res) => {
   try {
     const rawBody = req.body;
 
-    // Decode JWT (verify signature if WIX_PUBLIC_KEY is set, otherwise just decode)
+    // Decode the JWT sent by Wix
     let payload;
     try {
       payload = jwt.verify(rawBody, process.env.WIX_PUBLIC_KEY, { algorithms: ["RS256"] });
@@ -37,18 +37,17 @@ app.post('/webhooks/app-installed', async (req, res) => {
     const identity  = typeof event.identity === "string" ? JSON.parse(event.identity) : (event.identity ?? {});
     const eventData = typeof event.data      === "string" ? JSON.parse(event.data)     : (event.data     ?? {});
 
-    const identityType = identity?.identityType      ?? "undefined";
-    const wixUserId    = identity?.wixUserId         ?? identity?.anonymousVisitorId ?? "undefined";
-    const appId        = eventData?.appId            ?? "undefined";
-    const originId     = eventData?.originInstanceId ?? "undefined";
+    const identityType = identity?.identityType            ?? "undefined";
+    const wixUserId    = identity?.wixUserId               ?? identity?.anonymousVisitorId ?? "undefined";
+    const appId        = eventData?.appId                  ?? "undefined";
+    const originId     = eventData?.originInstanceId       ?? "undefined";
 
     console.log("Event Type:",    eventType);
     console.log("Instance ID:",   instanceId);
     console.log("Identity Type:", identityType);
     console.log("App ID:",        appId);
 
-    // Step 1: Get an access token using instanceId + app credentials
-    // Step 2: Use access token to call Get App Instance API for ownerEmail
+    // Get access token then fetch owner email
     let ownerEmail = "Not available";
     if (instanceId !== "undefined") {
       const accessToken = await getAccessToken(instanceId);
@@ -65,45 +64,55 @@ app.post('/webhooks/app-installed', async (req, res) => {
     console.error("Webhook processing error:", err.message);
     console.error(err.stack);
     await sendEmail({
-      eventType:    "ERROR",
-      instanceId:   "ERROR",
-      identityType: "ERROR",
-      wixUserId:    "ERROR",
-      appId:        "ERROR",
-      originId:     "ERROR",
-      ownerEmail:   "ERROR",
-      error:        err.message
+      eventType: "ERROR", instanceId: "ERROR", identityType: "ERROR",
+      wixUserId: "ERROR", appId: "ERROR", originId: "ERROR",
+      ownerEmail: "ERROR", error: err.message
     }).catch(console.error);
   }
 });
 
 /* ----------------------------------
-   Step 1: Get Access Token from Wix
-   POST https://www.wix.com/oauth/access
-   Requires: WIX_APP_ID + WIX_APP_SECRET env vars
-   Docs: https://dev.wix.com/docs/api-reference/app-management/oauth-2/create-access-token
+   Step 1: Get Access Token
+   POST https://www.wixapis.com/oauth2/token
+   !! Body must be sent as a raw string (not JSON content-type) !!
 ---------------------------------- */
 async function getAccessToken(instanceId) {
   try {
-    const response = await fetch("https://www.wix.com/oauth/access", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type:    "client_credentials",
-        client_id:     process.env.WIX_APP_ID,
-        client_secret: process.env.WIX_APP_SECRET,
-        instance_id:   instanceId
-      })
+    const body = JSON.stringify({
+      grant_type:    "client_credentials",
+      client_id:     process.env.WIX_APP_ID,
+      client_secret: process.env.WIX_APP_SECRET,
+      instance_id:   instanceId
     });
 
-    const data = await response.json();
-    console.log("Access token response:", JSON.stringify(data, null, 2));
+    console.log("Requesting access token for instance:", instanceId);
+
+    const response = await fetch("https://www.wixapis.com/oauth2/token", {
+      method: "POST",
+      headers: {
+        // Must be sent as raw bytes — Wix requires this specific content type
+        "Content-Type": "application/octet-stream"
+      },
+      body: body  // raw string body
+    });
+
+    const text = await response.text();
+    console.log("Access token raw response:", text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error("Access token response is not JSON:", text);
+      return null;
+    }
 
     if (!response.ok || !data.access_token) {
       console.error("Failed to get access token:", data);
       return null;
     }
 
+    console.log("Access token obtained successfully");
     return data.access_token;
 
   } catch (err) {
@@ -113,9 +122,9 @@ async function getAccessToken(instanceId) {
 }
 
 /* ----------------------------------
-   Step 2: Get Owner Email via Get App Instance
+   Step 2: Get Owner Email
    GET https://www.wixapis.com/apps/v1/instance
-   Requires: READ SITE OWNER EMAIL permission scope in your Wix app dashboard
+   Requires READ SITE OWNER EMAIL permission scope
 ---------------------------------- */
 async function getOwnerEmail(accessToken) {
   try {
@@ -137,7 +146,7 @@ async function getOwnerEmail(accessToken) {
 
     const ownerEmail = data?.instance?.site?.ownerInfo?.email
                     ?? data?.site?.ownerInfo?.email
-                    ?? "Email not returned — ensure READ SITE OWNER EMAIL scope is added";
+                    ?? "Email not returned — add READ SITE OWNER EMAIL scope in Wix Dev Center";
 
     return ownerEmail;
 
