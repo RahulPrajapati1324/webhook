@@ -109,7 +109,7 @@
 // //   await transporter.sendMail({
 // //     from: process.env.EMAIL_USER,
 // //     to: process.env.EMAIL_USER,
-// //     subject: '🎉 New Wix App Installed',
+// //     subject: 'New Wix App Installed',
 // //     text: `A new user installed your Wix app.
 
 // // Instance ID: ${instanceId}
@@ -128,6 +128,15 @@
 // // app.listen(PORT, () => {
 // //   console.log(`Server running on port ${PORT}`)
 // // })
+
+
+
+
+
+
+
+
+
 
 // import express from "express";
 // import jwt from "jsonwebtoken";
@@ -368,73 +377,112 @@
 // // })
 
 
-
 import express from "express";
-import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 
 const app = express();
+app.use(express.json());
 
 /* ----------------------------------
-   IMPORTANT: Use express.text()
+   Webhook - App Installed
 ---------------------------------- */
-app.post('/webhooks/app-installed', express.text({ type: '*/*' }), async (req, res) => {
+app.post('/webhooks/app-installed', async (req, res) => {
+  // Respond immediately so Wix does NOT timeout
+  res.status(200).send("OK");
+
   try {
-    let instanceId = "undefined";
-    let ownerEmail = "undefined";
-    let eventType = "undefined";
+    console.log("Raw body received:", JSON.stringify(req.body, null, 2));
 
-    try {
-      const rawPayload = jwt.verify(
-        req.body,
-        process.env.WIX_PUBLIC_KEY,
-        { algorithms: ["RS256"] }
-      );
+    const body = req.body;
 
-      const event = JSON.parse(rawPayload.data);
+    const eventType  = body.eventType  ?? "undefined";
+    const instanceId = body.instanceId ?? "undefined";
 
-      // Safely parse nested data — it might already be an object
-      const eventData = typeof event.data === "string"
-        ? JSON.parse(event.data)
-        : (event.data ?? {});
+    // identity and data are nested stringified JSON
+    const identity  = typeof body.identity === "string" ? JSON.parse(body.identity) : (body.identity ?? {});
+    const eventData = typeof body.data     === "string" ? JSON.parse(body.data)     : (body.data     ?? {});
 
-      eventType   = event.eventType  ?? "undefined";
-      instanceId  = event.instanceId ?? "undefined";
-      ownerEmail  = eventData?.site?.ownerEmail ?? "undefined";
+    const wixUserId = identity?.wixUserId         ?? "undefined";
+    const appId     = eventData?.appId            ?? "undefined";
+    const originId  = eventData?.originInstanceId ?? "undefined";
 
-      console.log("Event Type:",   eventType);
-      console.log("Instance ID:",  instanceId);
-      console.log("Owner Email:",  ownerEmail);
-      console.log("Event Data:",   eventData);
+    console.log("Event Type:",  eventType);
+    console.log("Instance ID:", instanceId);
+    console.log("Wix User ID:", wixUserId);
+    console.log("App ID:",      appId);
 
-    } catch (parseErr) {
-      // JWT/parse failed — still send email with raw body for debugging
-      console.error("Parse Error:", parseErr.message);
-      ownerEmail  = `PARSE ERROR: ${parseErr.message}`;
-      instanceId  = "N/A";
-      eventType   = "N/A";
+    // Fetch owner email from Wix Get App Instance API
+    let ownerEmail = "Not available";
+    if (instanceId !== "undefined") {
+      ownerEmail = await getOwnerEmail(instanceId);
     }
 
-    // Always send email — even if values are undefined/error
-    await sendEmail(ownerEmail, instanceId, eventType, req.body);
+    console.log("Owner Email:", ownerEmail);
 
-    res.status(200).send("Webhook processed");
+    await sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail, raw: body });
 
   } catch (err) {
-    console.error("Webhook Error:", err.message);
-    res.status(400).send(`Webhook error: ${err.message}`);
+    console.error("Webhook processing error:", err.message);
+    await sendEmail({
+      eventType:  "ERROR",
+      instanceId: "ERROR",
+      wixUserId:  "ERROR",
+      appId:      "ERROR",
+      originId:   "ERROR",
+      ownerEmail: "ERROR",
+      raw:        req.body,
+      error:      err.message
+    }).catch(console.error);
   }
 });
 
 /* ----------------------------------
+   Fetch Owner Email via Wix API
+   Docs: GET https://www.wixapis.com/apps/v1/instance
+   Requires: MANAGE YOUR APP + READ SITE OWNER EMAIL scopes
+---------------------------------- */
+async function getOwnerEmail(instanceId) {
+  try {
+    // The instanceId IS the Bearer token for this API call
+    const response = await fetch("https://www.wixapis.com/apps/v1/instance", {
+      method: "GET",
+      headers: {
+        "Authorization": instanceId,   // Pass instanceId directly as the Bearer token
+        "Content-Type":  "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Wix API error:", response.status, errText);
+      return `API Error ${response.status}: ${errText}`;
+    }
+
+    const data = await response.json();
+    console.log("Wix Instance API response:", JSON.stringify(data, null, 2));
+
+    // ownerInfo requires READ SITE OWNER EMAIL permission scope
+    const ownerEmail = data?.instance?.site?.ownerInfo?.email
+                    ?? data?.site?.ownerInfo?.email
+                    ?? "Email not returned (check READ SITE OWNER EMAIL scope)";
+
+    return ownerEmail;
+
+  } catch (err) {
+    console.error("getOwnerEmail error:", err.message);
+    return `Fetch failed: ${err.message}`;
+  }
+}
+
+/* ----------------------------------
    Send Email
 ---------------------------------- */
-async function sendEmail(ownerEmail, instanceId, eventType, rawBody) {
+async function sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail, raw, error }) {
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 587,
     secure: false,
-    family: 4, // Force IPv4
+    family: 4,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -443,18 +491,22 @@ async function sendEmail(ownerEmail, instanceId, eventType, rawBody) {
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
-    to: process.env.EMAIL_USER,
-    subject: "New Wix App Installed",
+    to:   process.env.EMAIL_USER,
+    subject: `Wix Webhook: ${eventType}`,
     text: `
-New Installation Detected
---------------------------
-Event Type:  ${eventType}
-Owner Email: ${ownerEmail}
-Instance ID: ${instanceId}
-Time:        ${new Date().toLocaleString()}
+Wix Webhook Received
+---------------------
+Event Type:         ${eventType}
+Instance ID:        ${instanceId}
+Owner Email:        ${ownerEmail}
+Wix User ID:        ${wixUserId}
+App ID:             ${appId}
+Origin Instance ID: ${originId}
+Time:               ${new Date().toLocaleString()}
+${error ? `\nError: ${error}` : ""}
 
---- Raw Body (for debugging) ---
-${typeof rawBody === "string" ? rawBody.substring(0, 500) : JSON.stringify(rawBody)}
+--- Raw Payload ---
+${JSON.stringify(raw, null, 2)}
     `
   });
 
