@@ -5,6 +5,12 @@ const app = express();
 app.use(express.text({ type: '*/*' }));
 
 /* ----------------------------------
+   EMAIL CONFIG
+---------------------------------- */
+const FROM_EMAIL = "onboarding@resend.dev";  // Resend free test sender
+const TO_EMAIL   = "2202030400145@silveroakuni.ac.in";         // ← PUT YOUR EMAIL HERE
+
+/* ----------------------------------
    Webhook - App Installed
 ---------------------------------- */
 app.post('/webhooks/app-installed', async (req, res) => {
@@ -31,10 +37,10 @@ app.post('/webhooks/app-installed', async (req, res) => {
     const identity  = typeof event.identity === "string" ? JSON.parse(event.identity) : (event.identity ?? {});
     const eventData = typeof event.data      === "string" ? JSON.parse(event.data)     : (event.data     ?? {});
 
-    const identityType = identity?.identityType                            ?? "undefined";
+    const identityType = identity?.identityType                              ?? "undefined";
     const wixUserId    = identity?.wixUserId ?? identity?.anonymousVisitorId ?? "undefined";
-    const appId        = eventData?.appId                                  ?? "undefined";
-    const originId     = eventData?.originInstanceId                       ?? "undefined";
+    const appId        = eventData?.appId                                    ?? "undefined";
+    const originId     = eventData?.originInstanceId                         ?? "undefined";
 
     console.log("Event Type:",    eventType);
     console.log("Instance ID:",   instanceId);
@@ -125,13 +131,7 @@ async function getOwnerEmail(accessToken) {
 }
 
 /* ----------------------------------
-   Send Email via Resend HTTP API
-   - No SMTP, works on Render free tier
-   - Sign up at https://resend.com (100 emails/day free)
-   - Get API key from Resend dashboard
-   - Set RESEND_API_KEY env var on Render
-   - Set RESEND_FROM_EMAIL to a verified sender (e.g. you@yourdomain.com)
-   - Set NOTIFY_EMAIL to where you want to receive notifications
+   Send Email via Resend
 ---------------------------------- */
 async function sendEmail({ eventType, instanceId, identityType, wixUserId, appId, originId, ownerEmail, error }) {
   const response = await fetch("https://api.resend.com/emails", {
@@ -141,8 +141,8 @@ async function sendEmail({ eventType, instanceId, identityType, wixUserId, appId
       "Content-Type":  "application/json"
     },
     body: JSON.stringify({
-      from:    process.env.RESEND_FROM_EMAIL,  // must be a verified sender in Resend
-      to:      process.env.NOTIFY_EMAIL,       // your email to receive notifications
+      from:    FROM_EMAIL,
+      to:      TO_EMAIL,
       subject: `Wix Webhook: ${eventType}`,
       text: `
 Wix Webhook Received
