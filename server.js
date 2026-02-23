@@ -376,11 +376,14 @@
 // //   console.log('🚀 Server started on port 3000')
 // // })
 
-
 import express from "express";
 import nodemailer from "nodemailer";
 
 const app = express();
+
+// Accept ANY content-type as raw text — handles Wix sending text/plain or application/json
+app.use(express.text({ type: '*/*' }));
+// Also try JSON parsing as fallback
 app.use(express.json());
 
 /* ----------------------------------
@@ -391,9 +394,23 @@ app.post('/webhooks/app-installed', async (req, res) => {
   res.status(200).send("OK");
 
   try {
-    console.log("Raw body received:", JSON.stringify(req.body, null, 2));
+    // req.body could be a string or already parsed object
+    let body;
+    if (typeof req.body === "string") {
+      try {
+        body = JSON.parse(req.body);
+      } catch (e) {
+        console.error("Body is a string but not valid JSON:", req.body);
+        body = {};
+      }
+    } else if (typeof req.body === "object" && req.body !== null) {
+      body = req.body;
+    } else {
+      console.error("Body is empty or unexpected type:", typeof req.body, req.body);
+      body = {};
+    }
 
-    const body = req.body;
+    console.log("Parsed body:", JSON.stringify(body, null, 2));
 
     const eventType  = body.eventType  ?? "undefined";
     const instanceId = body.instanceId ?? "undefined";
@@ -423,6 +440,7 @@ app.post('/webhooks/app-installed', async (req, res) => {
 
   } catch (err) {
     console.error("Webhook processing error:", err.message);
+    console.error(err.stack);
     await sendEmail({
       eventType:  "ERROR",
       instanceId: "ERROR",
@@ -430,7 +448,7 @@ app.post('/webhooks/app-installed', async (req, res) => {
       appId:      "ERROR",
       originId:   "ERROR",
       ownerEmail: "ERROR",
-      raw:        req.body,
+      raw:        { rawBody: String(req.body) },
       error:      err.message
     }).catch(console.error);
   }
@@ -438,16 +456,13 @@ app.post('/webhooks/app-installed', async (req, res) => {
 
 /* ----------------------------------
    Fetch Owner Email via Wix API
-   Docs: GET https://www.wixapis.com/apps/v1/instance
-   Requires: MANAGE YOUR APP + READ SITE OWNER EMAIL scopes
 ---------------------------------- */
 async function getOwnerEmail(instanceId) {
   try {
-    // The instanceId IS the Bearer token for this API call
     const response = await fetch("https://www.wixapis.com/apps/v1/instance", {
       method: "GET",
       headers: {
-        "Authorization": instanceId,   // Pass instanceId directly as the Bearer token
+        "Authorization": instanceId,
         "Content-Type":  "application/json"
       }
     });
@@ -461,7 +476,6 @@ async function getOwnerEmail(instanceId) {
     const data = await response.json();
     console.log("Wix Instance API response:", JSON.stringify(data, null, 2));
 
-    // ownerInfo requires READ SITE OWNER EMAIL permission scope
     const ownerEmail = data?.instance?.site?.ownerInfo?.email
                     ?? data?.site?.ownerInfo?.email
                     ?? "Email not returned (check READ SITE OWNER EMAIL scope)";
