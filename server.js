@@ -136,9 +136,9 @@
 //   console.log(`Server running on port ${PORT}`)
 // })
 
-const jwt = require("jsonwebtoken");
-const express = require("express");
-const nodemailer = require("nodemailer");
+import express from "express";
+import jwt from "jsonwebtoken";
+import nodemailer from "nodemailer";
 
 const app = express();
 
