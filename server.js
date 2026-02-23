@@ -49,11 +49,6 @@
 //   console.log(`Server running on port ${PORT}`);
 // });
 
-
-
-
-
-
 // import express from 'express'
 // import jwt from 'jsonwebtoken'
 // import nodemailer from 'nodemailer'
@@ -65,8 +60,6 @@
 // app.use(express.json())
 
 // const installs = [];
-
-
 
 // app.post('/webhooks/app-installed', async (req, res) => {
 //   try {
@@ -135,10 +128,6 @@
 // app.listen(PORT, () => {
 //   console.log(`Server running on port ${PORT}`)
 // })
-
-
-
-
 
 // import express from "express";
 // import jwt from "jsonwebtoken";
@@ -222,97 +211,128 @@
 //   console.log("Server started on port 3000");
 // });
 
+import express from 'express'
+import jwt from 'jsonwebtoken'
+import nodemailer from 'nodemailer'
+import fetch from 'node-fetch'
 
-import express from "express";
-import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
-import fetch from "node-fetch";
-
-const app = express();
+const app = express()
 
 /* ----------------------------------
    IMPORTANT: Use express.text()
 ---------------------------------- */
-app.post('/webhooks/app-installed', express.text({ type: '*/*' }), async (req, res) => {
-
-  try {
-
-    /* -------------------------------
+app.post(
+  '/webhooks/app-installed',
+  express.text({ type: '*/*' }),
+  async (req, res) => {
+    try {
+      /* -------------------------------
        1️⃣ Verify Wix JWT
     -------------------------------- */
-    const rawPayload = jwt.verify(
-      req.body,
-      process.env.WIX_PUBLIC_KEY,
-      { algorithms: ["RS256"] }
-    );
+      const rawPayload = jwt.verify(req.body, process.env.WIX_PUBLIC_KEY, {
+        algorithms: ['RS256']
+      })
 
-    const event = JSON.parse(rawPayload.data);
+      const event = JSON.parse(rawPayload.data)
 
-    console.log("Event Type:", event.eventType);
+      console.log('Event Type:', event.eventType)
 
-    /* -------------------------------
+      /* -------------------------------
        2️⃣ Handle AppInstalled Event
     -------------------------------- */
-    if (event.eventType === "AppInstalled") {
+      // if (event.eventType === "AppInstalled") {
 
-      const instanceId = event.instanceId;
-      const accessToken = rawPayload.instance?.accessToken;
+      //   const instanceId = event.instanceId;
+      //   const accessToken = rawPayload.instance?.accessToken;
 
-      console.log("Instance ID:", instanceId);
-      console.log("Access Token Exists:", !!accessToken);
+      //   console.log("Instance ID:", instanceId);
+      //   console.log("Access Token Exists:", !!accessToken);
 
-      if (!accessToken) {
-        return res.status(400).send("Access token missing");
-      }
+      //   if (!accessToken) {
+      //     return res.status(400).send("Access token missing");
+      //   }
 
-      /* -------------------------------
-         3️⃣ Call Wix Instance API
-      -------------------------------- */
-      const wixResponse = await fetch(
-        "https://www.wixapis.com/apps/v1/instance",
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
-          }
+      //   /* -------------------------------
+      //      3️⃣ Call Wix Instance API
+      //   -------------------------------- */
+      //   const wixResponse = await fetch(
+      //     "https://www.wixapis.com/apps/v1/instance",
+      //     {
+      //       method: "GET",
+      //       headers: {
+      //         Authorization: `Bearer ${accessToken}`,
+      //         "Content-Type": "application/json"
+      //       }
+      //     }
+      //   );
+
+      //   const instanceData = await wixResponse.json();
+
+      //   console.log("Instance API Response:", instanceData);
+
+      //   const ownerEmail = instanceData?.site?.ownerEmail;
+
+      //   console.log("Owner Email:", ownerEmail);
+
+      //   /* -------------------------------
+      //      4️⃣ Send Email If Email Exists
+      //   -------------------------------- */
+      //   if (ownerEmail) {
+      //     await sendEmail(ownerEmail, instanceId);
+      //   } else {
+      //     console.log("Owner email not found in instance API response");
+      //   }
+      // }
+
+      if (event.eventType === 'AppInstalled') {
+        const instanceId = event.instanceId
+        const accessToken = rawPayload.instanceToken
+
+        console.log('Instance ID:', instanceId)
+        console.log('Access Token Exists:', !!accessToken)
+
+        if (!accessToken) {
+          return res.status(400).send('Access token missing')
         }
-      );
 
-      const instanceData = await wixResponse.json();
+        const wixResponse = await fetch(
+          'https://www.wixapis.com/apps/v1/instance',
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        )
 
-      console.log("Instance API Response:", instanceData);
+        const instanceData = await wixResponse.json()
 
-      const ownerEmail = instanceData?.site?.ownerEmail;
+        console.log('Instance API Response:', instanceData)
 
-      console.log("Owner Email:", ownerEmail);
+        const ownerEmail = instanceData?.site?.ownerEmail
 
-      /* -------------------------------
-         4️⃣ Send Email If Email Exists
-      -------------------------------- */
-      if (ownerEmail) {
-        await sendEmail(ownerEmail, instanceId);
-      } else {
-        console.log("Owner email not found in instance API response");
+        console.log('Owner Email:', ownerEmail)
+
+        if (ownerEmail) {
+          await sendEmail(ownerEmail, instanceId)
+        }
       }
+
+      res.status(200).send('Webhook processed')
+    } catch (err) {
+      console.error('Webhook Error:', err.message)
+      res.status(400).send(`Webhook error: ${err.message}`)
     }
-
-    res.status(200).send("Webhook processed");
-
-  } catch (err) {
-    console.error("Webhook Error:", err.message);
-    res.status(400).send(`Webhook error: ${err.message}`);
   }
-});
-
+)
 
 /* ----------------------------------
    Send Email Function
 ---------------------------------- */
-async function sendEmail(ownerEmail, instanceId) {
-
+async function sendEmail (ownerEmail, instanceId) {
   const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
+    host: 'smtp.gmail.com',
     port: 587,
     secure: false,
     family: 4,
@@ -320,12 +340,12 @@ async function sendEmail(ownerEmail, instanceId) {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     }
-  });
+  })
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
     to: process.env.EMAIL_USER, // Change if you want to send to ownerEmail
-    subject: "🎉 New Wix App Installed",
+    subject: '🎉 New Wix App Installed',
     text: `
 New Installation Detected
 
@@ -333,15 +353,14 @@ Owner Email: ${ownerEmail}
 Instance ID: ${instanceId}
 Time: ${new Date().toLocaleString()}
 `
-  });
+  })
 
-  console.log("Email sent successfully");
+  console.log('Email sent successfully')
 }
-
 
 /* ----------------------------------
    Start Server
 ---------------------------------- */
 app.listen(3000, () => {
-  console.log("🚀 Server started on port 3000");
-});
+  console.log('🚀 Server started on port 3000')
+})
