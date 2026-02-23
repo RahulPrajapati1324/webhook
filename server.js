@@ -376,15 +376,15 @@
 // //   console.log('🚀 Server started on port 3000')
 // // })
 
+
 import express from "express";
+import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 
 const app = express();
 
-// Accept ANY content-type as raw text — handles Wix sending text/plain or application/json
+// Wix sends a JWT as raw text body
 app.use(express.text({ type: '*/*' }));
-// Also try JSON parsing as fallback
-app.use(express.json());
 
 /* ----------------------------------
    Webhook - App Installed
@@ -394,30 +394,35 @@ app.post('/webhooks/app-installed', async (req, res) => {
   res.status(200).send("OK");
 
   try {
-    // req.body could be a string or already parsed object
-    let body;
-    if (typeof req.body === "string") {
-      try {
-        body = JSON.parse(req.body);
-      } catch (e) {
-        console.error("Body is a string but not valid JSON:", req.body);
-        body = {};
-      }
-    } else if (typeof req.body === "object" && req.body !== null) {
-      body = req.body;
-    } else {
-      console.error("Body is empty or unexpected type:", typeof req.body, req.body);
-      body = {};
+    const rawBody = req.body;
+    console.log("Raw body (first 100 chars):", String(rawBody).substring(0, 100));
+
+    // Wix sends the webhook as a signed JWT — decode without verifying first to inspect
+    // Then verify with your public key
+    let payload;
+    try {
+      payload = jwt.verify(rawBody, process.env.WIX_PUBLIC_KEY, { algorithms: ["RS256"] });
+    } catch (jwtErr) {
+      console.warn("JWT verify failed, trying decode without verification:", jwtErr.message);
+      // Fallback: decode without verification (for testing only)
+      payload = jwt.decode(rawBody);
     }
 
-    console.log("Parsed body:", JSON.stringify(body, null, 2));
+    console.log("JWT payload:", JSON.stringify(payload, null, 2));
 
-    const eventType  = body.eventType  ?? "undefined";
-    const instanceId = body.instanceId ?? "undefined";
+    // payload.data is a stringified JSON
+    const event = typeof payload.data === "string"
+      ? JSON.parse(payload.data)
+      : (payload.data ?? {});
 
-    // identity and data are nested stringified JSON
-    const identity  = typeof body.identity === "string" ? JSON.parse(body.identity) : (body.identity ?? {});
-    const eventData = typeof body.data     === "string" ? JSON.parse(body.data)     : (body.data     ?? {});
+    console.log("Event:", JSON.stringify(event, null, 2));
+
+    const eventType  = event.eventType  ?? "undefined";
+    const instanceId = event.instanceId ?? "undefined";
+
+    // identity and data inside event are also stringified JSON
+    const identity  = typeof event.identity === "string" ? JSON.parse(event.identity) : (event.identity ?? {});
+    const eventData = typeof event.data      === "string" ? JSON.parse(event.data)     : (event.data     ?? {});
 
     const wixUserId = identity?.wixUserId         ?? "undefined";
     const appId     = eventData?.appId            ?? "undefined";
@@ -436,7 +441,7 @@ app.post('/webhooks/app-installed', async (req, res) => {
 
     console.log("Owner Email:", ownerEmail);
 
-    await sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail, raw: body });
+    await sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail });
 
   } catch (err) {
     console.error("Webhook processing error:", err.message);
@@ -448,7 +453,6 @@ app.post('/webhooks/app-installed', async (req, res) => {
       appId:      "ERROR",
       originId:   "ERROR",
       ownerEmail: "ERROR",
-      raw:        { rawBody: String(req.body) },
       error:      err.message
     }).catch(console.error);
   }
@@ -490,12 +494,13 @@ async function getOwnerEmail(instanceId) {
 
 /* ----------------------------------
    Send Email
+   NOTE: Render.com blocks port 587 — using port 465 (SSL) instead
 ---------------------------------- */
-async function sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail, raw, error }) {
+async function sendEmail({ eventType, instanceId, wixUserId, appId, originId, ownerEmail, error }) {
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
+    port: 465,       // 587 is blocked on Render — use 465 with SSL
+    secure: true,    // true for port 465
     family: 4,
     auth: {
       user: process.env.EMAIL_USER,
@@ -518,9 +523,6 @@ App ID:             ${appId}
 Origin Instance ID: ${originId}
 Time:               ${new Date().toLocaleString()}
 ${error ? `\nError: ${error}` : ""}
-
---- Raw Payload ---
-${JSON.stringify(raw, null, 2)}
     `
   });
 
