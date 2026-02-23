@@ -155,49 +155,59 @@ const installs = []
 app.post('/webhooks/app-installed', async (req, res) => {
   try {
 
-    const token = req.body
+    let data;
 
-    if (!token) {
-      return res.status(400).send("No token received")
+    // 🔎 If body is string → it's JWT
+    if (typeof req.body === "string") {
+
+      const decoded = jwt.verify(
+        req.body,
+        process.env.WIX_PUBLIC_KEY,
+        { algorithms: ['RS256'] }
+      );
+
+      data = decoded?.data;
+
+    } 
+    // 🔎 If body is object → direct JSON (Postman)
+    else if (typeof req.body === "object") {
+
+      data = req.body;
+
+    } else {
+      return res.status(400).send("Invalid webhook payload");
     }
 
-    // 🔐 VERIFY using Wix Public Key
-    const decoded = jwt.verify(
-      token,
-      process.env.WIX_PUBLIC_KEY,
-      { algorithms: ['RS256'] }
-    )
+    console.log("Webhook Data:", data);
 
-    console.log("Decoded Webhook:", decoded)
-
-    const ownerEmail = decoded?.data?.site?.ownerEmail
-    const instanceId = decoded?.data?.instance?.instanceId
-    const siteId = decoded?.data?.site?.siteId
+    const ownerEmail = data?.site?.ownerEmail;
+    const instanceId = data?.instance?.instanceId;
+    const siteId = data?.site?.siteId;
 
     const installData = {
-      instanceId,
       ownerEmail,
+      instanceId,
       siteId,
       installedAt: new Date()
+    };
+
+    installs.push(installData);
+
+    // Optional: send email
+    if (ownerEmail) {
+      await sendEmail(ownerEmail, instanceId);
     }
-
-    installs.push(installData)
-
-    console.log("Stored Install:", installData)
-
-    // ✅ SEND EMAIL
-    await sendEmail(ownerEmail, instanceId)
 
     res.status(200).json({
       success: true,
       data: installData
-    })
+    });
 
   } catch (error) {
-    console.error("Webhook Error:", error.message)
-    res.status(500).send("Webhook failed")
+    console.error("Webhook Error:", error.message);
+    res.status(500).send("Webhook failed");
   }
-})
+});
 
 /* ----------------------------------
    View Stored Installs
