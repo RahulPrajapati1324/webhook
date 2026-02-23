@@ -1,12 +1,7 @@
 import express from "express";
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
-import dns from "dns";
-import { promisify } from "util";
 
-const resolve4 = promisify(dns.resolve4);
 const app = express();
-
 app.use(express.text({ type: '*/*' }));
 
 /* ----------------------------------
@@ -36,10 +31,10 @@ app.post('/webhooks/app-installed', async (req, res) => {
     const identity  = typeof event.identity === "string" ? JSON.parse(event.identity) : (event.identity ?? {});
     const eventData = typeof event.data      === "string" ? JSON.parse(event.data)     : (event.data     ?? {});
 
-    const identityType = identity?.identityType                      ?? "undefined";
+    const identityType = identity?.identityType                            ?? "undefined";
     const wixUserId    = identity?.wixUserId ?? identity?.anonymousVisitorId ?? "undefined";
-    const appId        = eventData?.appId                            ?? "undefined";
-    const originId     = eventData?.originInstanceId                 ?? "undefined";
+    const appId        = eventData?.appId                                  ?? "undefined";
+    const originId     = eventData?.originInstanceId                       ?? "undefined";
 
     console.log("Event Type:",    eventType);
     console.log("Instance ID:",   instanceId);
@@ -73,17 +68,15 @@ app.post('/webhooks/app-installed', async (req, res) => {
 ---------------------------------- */
 async function getAccessToken(instanceId) {
   try {
-    const body = JSON.stringify({
-      grant_type:    "client_credentials",
-      client_id:     process.env.WIX_APP_ID,
-      client_secret: process.env.WIX_APP_SECRET,
-      instance_id:   instanceId
-    });
-
     const response = await fetch("https://www.wixapis.com/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream" },
-      body
+      body: JSON.stringify({
+        grant_type:    "client_credentials",
+        client_id:     process.env.WIX_APP_ID,
+        client_secret: process.env.WIX_APP_SECRET,
+        instance_id:   instanceId
+      })
     });
 
     const data = await response.json();
@@ -132,41 +125,26 @@ async function getOwnerEmail(accessToken) {
 }
 
 /* ----------------------------------
-   Send Email
-   Fix: Render blocks IPv6 to Gmail — resolve smtp.gmail.com
-   to an IPv4 address manually before connecting
+   Send Email via Resend HTTP API
+   - No SMTP, works on Render free tier
+   - Sign up at https://resend.com (100 emails/day free)
+   - Get API key from Resend dashboard
+   - Set RESEND_API_KEY env var on Render
+   - Set RESEND_FROM_EMAIL to a verified sender (e.g. you@yourdomain.com)
+   - Set NOTIFY_EMAIL to where you want to receive notifications
 ---------------------------------- */
 async function sendEmail({ eventType, instanceId, identityType, wixUserId, appId, originId, ownerEmail, error }) {
-  // Force IPv4 by resolving Gmail's SMTP hostname ourselves
-  let gmailIp;
-  try {
-    const addresses = await resolve4("smtp.gmail.com");
-    gmailIp = addresses[0];
-    console.log("Resolved smtp.gmail.com to IPv4:", gmailIp);
-  } catch (dnsErr) {
-    console.warn("DNS resolve failed, falling back to hostname:", dnsErr.message);
-    gmailIp = "smtp.gmail.com";
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: gmailIp,      // Use the resolved IPv4 address directly
-    port: 465,
-    secure: true,
-    tls: {
-      // Must set servername when using IP so TLS cert matches
-      servername: "smtp.gmail.com"
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type":  "application/json"
     },
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-
-  await transporter.sendMail({
-    from: process.env.EMAIL_USER,
-    to:   process.env.EMAIL_USER,
-    subject: `Wix Webhook: ${eventType}`,
-    text: `
+    body: JSON.stringify({
+      from:    process.env.RESEND_FROM_EMAIL,  // must be a verified sender in Resend
+      to:      process.env.NOTIFY_EMAIL,       // your email to receive notifications
+      subject: `Wix Webhook: ${eventType}`,
+      text: `
 Wix Webhook Received
 ---------------------
 Event Type:         ${eventType}
@@ -178,10 +156,17 @@ App ID:             ${appId}
 Origin Instance ID: ${originId}
 Time:               ${new Date().toLocaleString()}
 ${error ? `\nError: ${error}` : ""}
-    `
+      `
+    })
   });
 
-  console.log("Email sent successfully");
+  const result = await response.json();
+  if (!response.ok) {
+    console.error("Resend API error:", result);
+    throw new Error(`Resend failed: ${JSON.stringify(result)}`);
+  }
+
+  console.log("Email sent successfully via Resend:", result.id);
 }
 
 app.listen(3000, () => {
